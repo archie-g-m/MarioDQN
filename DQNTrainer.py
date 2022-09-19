@@ -1,6 +1,7 @@
 import sys
 import math
 import time
+from typing import MutableSequence
 import torch
 import random
 import numpy as np
@@ -61,8 +62,8 @@ class DQNTrainer(object):
 
         # Create Policy and Target DQN networks
         self.n_actions = env.action_space.n
-        self.policy_dqn = DQN(self.FRAME_BUFFER*3, self.n_actions).to(self.device)
-        self.target_dqn = DQN(self.FRAME_BUFFER*3, self.n_actions).to(self.device)
+        self.policy_dqn = DQN(self.FRAME_BUFFER, self.n_actions).to(self.device)
+        self.target_dqn = DQN(self.FRAME_BUFFER, self.n_actions).to(self.device)
 
         # Sync both networks to start
         self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
@@ -118,11 +119,19 @@ class DQNTrainer(object):
         """
         return self.EPS_END + (self.EPS_START - self.EPS_END) * math.exp(-1. * self.steps_done / self.EPS_DECAY)
     
-    def avg_splits(self, tracker):
+    def avg_splits(self, tracker: MutableSequence):
+        """Averages the time splits from a tracker
+
+        Args:
+            tracker (MutableSequence): _description_
+
+        Returns:
+            float: average time
+        """
         if len(tracker) > 0:
             return round(sum(tracker)/len(tracker),4)
         else:
-            return 0
+            return 0.
 
     def optimize_model(self):
         """
@@ -175,10 +184,12 @@ class DQNTrainer(object):
         
     def frame_to_tensor(self, frame: np.ndarray, size: tuple = None):
         t = torch.from_numpy(frame.transpose(2, 0, 1).copy()).to(self.device)
+        t = T.Grayscale()(t)
         if t.dtype != torch.float:
             t = T.ConvertImageDtype(torch.float)(t)
         if size is not None:
             t = T.Resize((size), T.InterpolationMode.NEAREST)(t)
+        # print(t.shape)
         return t
     
     def buffer_to_state(self):
@@ -205,7 +216,7 @@ class DQNTrainer(object):
         
         #Fill Buffer
         for _ in range(self.FRAME_BUFFER-1):
-            self.frame_buffer.append(torch.zeros((3,self.STATE_SIZE, self.STATE_SIZE), device=self.device))
+            self.frame_buffer.append(torch.zeros((1,self.STATE_SIZE, self.STATE_SIZE), device=self.device))
         self.frame_buffer.append(last_frame)
         
         #Convert Buffer to State
@@ -231,6 +242,9 @@ class DQNTrainer(object):
             
             # Convert reward to tensor
             reward = torch.tensor([reward], device=self.device)
+            
+            # Total the Rewards for the episode
+            episode_rewards += reward
 
             # Observe new state if not done
             if done:
@@ -245,8 +259,8 @@ class DQNTrainer(object):
             # Move to the next state
             state = next_state
             
-            opt_start = time.time()
             # Perform one step of the optimization (on the policy network)
+            opt_start = time.time()
             self.optimize_model()
             opt_split = time.time()
             self.opt_times.append(opt_split-opt_start)
@@ -265,13 +279,25 @@ class DQNTrainer(object):
             if nEpisode % self.TARGET_UPDATE == 0:
                 self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
 
-            episode_rewards += reward
+            # Print status of learning every 60 frames
+            if t % 60 == 0:
+                str_dict = {
+                "episode_str": f"Episode {nEpisode:03.0f}/300",
+                "step_str": f"Step {t:04.0f}/{self.MAX_STEPS}",
+                "reward_str": f"Rewards: {episode_rewards.item():05.0f}",
+                "score_str": f"Score: {info['score']:05.0f}",
+                "xpos_str": f"X Pos: {info['x_pos']:04.0f}",
+                "time_str": f"Timeout: {x_pos_timeout:03.0f}",
+                "prob_str": f"Rand Prob: {round(self.calc_rand_prob(), 3):05.3f}",
+                "ittime_str": f"It Time: {self.avg_splits(self.it_times):06.4f}",
+                "mem_str": f"Mem: {sys.getsizeof(self.memory.memory)/10**6:06.3} MB",
+                "padding": "{:15}".format(" ")
+                }
+                print(", ".join(str_dict.values()), end="\r")
             
+            #render the frame if specified
             if render:
                 self.env.render(mode='human')
-                
-            if t % 10 == 0:
-                print(f"Episode {nEpisode:03.0f}/300, Step {t:04.0f}/{self.MAX_STEPS}, Rewards: {episode_rewards.item():05.0f}, Score: {info['score']:05.0f}, X Pos: {info['x_pos']:04.0f} Timeout: {x_pos_timeout:03.0f}, Rand Prob: {round(self.calc_rand_prob(), 3):05.3f}, It Time: {self.avg_splits(self.it_times):06.4f}, Mem: {sys.getsizeof(self.memory.memory)/10**6:06.3} MB", end="\r")
 
             last_x = info['x_pos']
 

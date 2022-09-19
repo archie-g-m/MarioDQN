@@ -16,4 +16,4 @@ if __name__ == "__main__":
                          env=train_env, 
                          device=device)
     
-    trainer.train()
+    trainer.train(render_every=10)
