@@ -4,11 +4,13 @@ import random
 import numpy as np
 import configparser
 import torchvision.transforms as T
+import matplotlib.pyplot as plt
 
 from gym import Env
 from DQN import DQN
 from Memory import Memory, stateChange
 from itertools import count
+from PIL import Image
 
 
 class DQNTrainer(object):
@@ -149,7 +151,7 @@ class DQNTrainer(object):
     def state_to_tensor(self, state: np.ndarray, size: tuple = None):
         t = torch.tensor(state.transpose(2, 0, 1).copy(), dtype=torch.float, device=self.device).unsqueeze(0)
         if size is not None:
-            t = T.Resize((size))(t)
+            t = T.Resize((size), T.InterpolationMode.NEAREST)(t)
         return t
 
     def train(self):
@@ -157,9 +159,14 @@ class DQNTrainer(object):
             self.train_episode(i)
 
     def train_episode(self, nEpisode: int):
+        episode_rewards = 0
         # Initialize the environment and state
         state = self.env.reset()
-        last_state = self.state_to_tensor(state)
+        last_state = self.state_to_tensor(state, (16,16))
+        # np_last_state = last_state[0].cpu().numpy().transpose(1,2,0)
+        # plt.imshow(np_last_state/255)
+        # plt.show()
+        # while True: pass
         current_state = last_state
         state = current_state - last_state
         for t in range(self.MAX_STEPS):
@@ -168,7 +175,7 @@ class DQNTrainer(object):
             # Perform action
             state, reward, done, info = self.env.step(action.item())
             # Convert action and reward to tensors
-            state = self.state_to_tensor(state)
+            state = self.state_to_tensor(state, (16,16))
             reward = torch.tensor([reward], device=self.device)
 
             # Observe new state
@@ -193,10 +200,11 @@ class DQNTrainer(object):
             if nEpisode % self.TARGET_UPDATE == 0:
                 self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
 
-            # self.env.render(mode='human')
+            episode_rewards+=reward
+            self.env.render(mode='human')
             if t % 10 == 0:
-                print(f"Episode {str(nEpisode).zfill(4)}/300, Step {str(t).zfill(4)}/{self.MAX_STEPS}, Score: {info['score']}, Action: {action.item()}", end="\r")
-
+                print(f"Episode {str(nEpisode).zfill(4)}/300, Step {str(t).zfill(4)}/{self.MAX_STEPS}, Rewards: {episode_rewards.item()}, Score: {info['score']}, Action: {action.item()}", end="\r")
+        print()
 
 if __name__ == "__main__":
     trainer = DQNTrainer("dqn_paremeters.cfg")
