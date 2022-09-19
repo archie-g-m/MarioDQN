@@ -51,7 +51,7 @@ class DQNTrainer(object):
         self.STATE_SIZE = int(config.get(
             'Training Hyperparameters', 'STATE_SIZE'))
         self.FRAME_BUFFER = int(config.get(
-            'Training Hyperparameters', 'FRAME_BUFFER'))
+            'Environment Hyperparameters', 'FRAME_STACK'))
 
         print(self.X_TIMEOUT)
         # Load Gym environment
@@ -62,8 +62,10 @@ class DQNTrainer(object):
 
         # Create Policy and Target DQN networks
         self.n_actions = env.action_space.n
-        self.policy_dqn = DQN(self.FRAME_BUFFER, self.n_actions).to(self.device)
-        self.target_dqn = DQN(self.FRAME_BUFFER, self.n_actions).to(self.device)
+        self.policy_dqn = DQN(
+            self.FRAME_BUFFER, self.n_actions).to(self.device)
+        self.target_dqn = DQN(
+            self.FRAME_BUFFER, self.n_actions).to(self.device)
 
         # Sync both networks to start
         self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
@@ -75,9 +77,9 @@ class DQNTrainer(object):
 
         # Create Memory for StateChanges
         self.memory = Memory(10000)
-        
-        # Create Buffer for Number of frames to feed to robot
-        self.frame_buffer = deque([], maxlen=self.FRAME_BUFFER)
+
+        # # Create Buffer for Number of frames to feed to robot
+        # self.frame_buffer = deque([], maxlen=self.FRAME_BUFFER)
 
         # Track number steps
         self.steps_done = 0
@@ -90,7 +92,7 @@ class DQNTrainer(object):
         self.model_times = deque([], maxlen=1000)
         self.step_times = deque([], maxlen=1000)
         self.opt_times = deque([], maxlen=1000)
-        
+
     def select_action(self, state):
         """generates an action based upon the given input state
 
@@ -118,7 +120,7 @@ class DQNTrainer(object):
             float: probability
         """
         return self.EPS_END + (self.EPS_START - self.EPS_END) * math.exp(-1. * self.steps_done / self.EPS_DECAY)
-    
+
     def avg_splits(self, tracker: MutableSequence):
         """Averages the time splits from a tracker
 
@@ -129,7 +131,7 @@ class DQNTrainer(object):
             float: average time
         """
         if len(tracker) > 0:
-            return round(sum(tracker)/len(tracker),4)
+            return round(sum(tracker)/len(tracker), 4)
         else:
             return 0.
 
@@ -140,7 +142,7 @@ class DQNTrainer(object):
         """
         if len(self.memory) < self.BATCH_SIZE:
             return
-        
+
         transitions = self.memory.sample(self.BATCH_SIZE)
         # Convertt batch-array of Transitions to Transition of batch-arrays.
         batch = stateChange(*zip(*transitions))
@@ -150,115 +152,112 @@ class DQNTrainer(object):
         #                               dtype=torch.bool)
         # non_final_next_states = torch.cat(
         #     [s for s in batch.next_state if s is not None])
-        state_batch = torch.cat(batch.state)
-        next_state_batch = torch.cat(batch.next_state)
-        action_batch = torch.cat(batch.action)
-        reward_batch = torch.cat(batch.reward)
+        state_batch = torch.cat(batch.state).to(self.device)
+        next_state_batch = torch.cat(batch.next_state).to(self.device)
+        action_batch = torch.cat(batch.action).to(self.device)
+        reward_batch = torch.cat(batch.reward).to(self.device)
 
         # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
         # columns of actions taken. These are the actions which would've been taken
         # for each batch state according to policy_dqn
-        state_action_values = self.policy_dqn(state_batch).gather(1, action_batch.unsqueeze(0)).squeeze()
-        
+        state_action_values = self.policy_dqn(state_batch.to(self.device)).gather(1, action_batch.unsqueeze(0)).squeeze()
+
         # Compute V(s_{t+1}) for all next states.
         # Expected values of actions for non_final_next_states are computed based
         # on the "older" target_net; selecting their best reward with max(1)[0].
         # This is merged based on the mask, such that we'll have either the expected
         # state value or 0 in case the state was final.
-        next_state_values = self.target_dqn(next_state_batch).max(1)[0].detach()
+        next_state_values = self.target_dqn(next_state_batch.to(self.device)).max(1)[0].detach()
 
         # Compute the expected Q values
-        expected_state_action_values = (next_state_values * self.GAMMA) + reward_batch
-        
+        expected_state_action_values = (
+            next_state_values * self.GAMMA) + reward_batch
+
         # Compute Huber loss
         criterion = torch.nn.SmoothL1Loss()
-        loss = criterion(state_action_values.to(self.device),
-                         expected_state_action_values.to(self.device))
-        
+        loss = criterion(state_action_values,
+                         expected_state_action_values)
+
         # Optimize the model
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        
+
         return
-        
+
     def frame_to_tensor(self, frame: np.ndarray, size: tuple = None):
-        t = torch.from_numpy(frame.transpose(2, 0, 1).copy()).to(self.device)
-        t = T.Grayscale()(t)
+        t = torch.from_numpy(np.asarray(frame)).unsqueeze(0)
         if t.dtype != torch.float:
             t = T.ConvertImageDtype(torch.float)(t)
-        if size is not None:
-            t = T.Resize((size), T.InterpolationMode.NEAREST)(t)
-        # print(t.shape)
         return t
-    
-    def buffer_to_state(self):
-        return torch.cat(list(self.frame_buffer)).unsqueeze(0).to(self.device)
 
-    def train(self, render_every: int=None):
+    def buffer_to_state(self):
+        return torch.cat(list(self.frame_buffer)).unsqueeze(0)
+
+    def train(self, render_every: int = None):
         for i in range(300):
             if render_every is None:
                 self.train_episode(i, False)
-            elif i % 50 == 0:
+            elif i % render_every == 0:
                 self.train_episode(i, True)
             else:
                 self.train_episode(i, False)
 
+
     def train_episode(self, nEpisode: int, render: bool):
         episode_rewards = 0
         # Initialize the environment and state
-        frame = self.env.reset()
-        last_frame = self.frame_to_tensor(frame, (self.STATE_SIZE, self.STATE_SIZE))
-        
-        #Initialize X Position Tracking
+        state = self.env.reset()
+        state = self.frame_to_tensor(state)
+
+        # Initialize X Position Tracking
         last_x = 0
         x_pos_timeout = 0
-        
-        #Fill Buffer
-        for _ in range(self.FRAME_BUFFER-1):
-            self.frame_buffer.append(torch.zeros((1,self.STATE_SIZE, self.STATE_SIZE), device=self.device))
-        self.frame_buffer.append(last_frame)
-        
-        #Convert Buffer to State
-        state = self.buffer_to_state()
-        
+
+        # #Fill Buffer
+        # for _ in range(self.FRAME_BUFFER-1):
+        #     self.frame_buffer.append(torch.zeros((1,self.STATE_SIZE, self.STATE_SIZE), device=self.device))
+        # self.frame_buffer.append(last_frame)
+
+        # #Convert Buffer to State
+        # state = self.buffer_to_state()
+
         it_start = time.time()
         for t in range(self.MAX_STEPS):
             self.it_times.append((time.time()-it_start))
             it_start = time.time()
-            
+
             # Select an action
-            action = self.select_action(state).squeeze().unsqueeze(0)
+            action = self.select_action(state.to(self.device)).squeeze().unsqueeze(0)
             model_split = time.time()
             self.model_times.append(model_split-it_start)
-            
+
             # Perform action
-            frame, reward, done, info = self.env.step(action.item())
+            next_state, reward, done, info = self.env.step(action.item())
             self.step_times.append(time.time()-model_split)
-            
+
             # Convert this frame and to tensor and append to frame buffer
-            this_frame = self.frame_to_tensor(frame, (self.STATE_SIZE, self.STATE_SIZE))
-            self.frame_buffer.append(this_frame)
-            
+            next_state = self.frame_to_tensor(next_state)
+            # self.frame_buffer.append(this_frame)
+
             # Convert reward to tensor
-            reward = torch.tensor([reward], device=self.device)
-            
+            reward = torch.tensor([reward])#, device=self.device)
+
             # Total the Rewards for the episode
             episode_rewards += reward
 
             # Observe new state if not done
             if done:
                 break
-            else:
-                next_state = self.buffer_to_state()
+            # else:
+            #     next_state = self.buffer_to_state()
 
             # Store the transition in memory if next_state is not none
-            if next_state is not None:
-                self.memory.push(state, action, next_state, reward)
-            
+            self.memory.push(state, action, next_state, reward)
+
             # Move to the next state
             state = next_state
-            
+
             # Perform one step of the optimization (on the policy network)
             opt_start = time.time()
             self.optimize_model()
@@ -282,20 +281,20 @@ class DQNTrainer(object):
             # Print status of learning every 60 frames
             if t % 60 == 0:
                 str_dict = {
-                "episode_str": f"Episode {nEpisode:03.0f}/300",
-                "step_str": f"Step {t:04.0f}/{self.MAX_STEPS}",
-                "reward_str": f"Rewards: {episode_rewards.item():05.0f}",
-                "score_str": f"Score: {info['score']:05.0f}",
-                "xpos_str": f"X Pos: {info['x_pos']:04.0f}",
-                "time_str": f"Timeout: {x_pos_timeout:03.0f}",
-                "prob_str": f"Rand Prob: {round(self.calc_rand_prob(), 3):05.3f}",
-                "ittime_str": f"It Time: {self.avg_splits(self.it_times):06.4f}",
-                "mem_str": f"Mem: {sys.getsizeof(self.memory.memory)/10**6:06.3} MB",
-                "padding": "{:15}".format(" ")
+                    "episode_str": f"Episode {nEpisode:03.0f}/300",
+                    "step_str": f"Step {t:04.0f}/{self.MAX_STEPS}",
+                    "reward_str": f"Rewards: {episode_rewards.item():05.0f}",
+                    "score_str": f"Score: {info['score']:05.0f}",
+                    "xpos_str": f"X Pos: {info['x_pos']:04.0f}",
+                    "time_str": f"Timeout: {x_pos_timeout:03.0f}",
+                    "prob_str": f"Rand Prob: {round(self.calc_rand_prob(), 3):05.3f}",
+                    "ittime_str": f"It Time: {self.avg_splits(self.it_times):06.4f}",
+                    "mem_str": f"Mem: {sys.getsizeof(self.memory.memory)/10**6:06.3} MB",
+                    "padding": "{:15}".format(" ")
                 }
                 print(", ".join(str_dict.values()), end="\r")
-            
-            #render the frame if specified
+
+            # render the frame if specified
             if render:
                 self.env.render(mode='human')
 
