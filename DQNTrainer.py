@@ -1,3 +1,4 @@
+from selectors import BaseSelector
 import sys
 import math
 import time
@@ -26,7 +27,7 @@ class DQNTrainer(object):
     https://github.com/archie-g-m/ReinforcmentLearningComparison
     """
 
-    def __init__(self, config_path: str, env: Env, device: torch.device):
+    def __init__(self, config_path: str, env: Env, device: torch.device, model_in: str = None, model_out: str = "models/best_mario.pt"):
         # Parse Config File
         config = configparser.ConfigParser()
         config.read_file(open(config_path))
@@ -60,12 +61,26 @@ class DQNTrainer(object):
         # Establish device to run on
         self.device = device
 
+        # Establish export path for best model
+        self.model_out = model_out
+
         # Create Policy and Target DQN networks
         self.n_actions = env.action_space.n
         self.policy_dqn = DQN(
             self.FRAME_BUFFER, self.n_actions).to(self.device)
         self.target_dqn = DQN(
             self.FRAME_BUFFER, self.n_actions).to(self.device)
+
+        # Load model state dict if provided
+        if model_in is not None:
+            self.start_episode, self.best_reward, start_state_dict = torch.load(model_in)
+            self.policy_dqn.load_state_dict(start_state_dict)
+            print("Loading Checkpoint")
+            print("Start Episode " + str(self.start_episode))
+            print("Best Reward " + str(self.best_reward))
+        else: # Otherwise initialize the tracking metrics to 0
+            self.start_episode = 0
+            self.best_reward = 0
 
         # Sync both networks to start
         self.target_dqn.load_state_dict(self.policy_dqn.state_dict())
@@ -191,11 +206,8 @@ class DQNTrainer(object):
             t = T.ConvertImageDtype(torch.float)(t)
         return t
 
-    def buffer_to_state(self):
-        return torch.cat(list(self.frame_buffer)).unsqueeze(0)
-
     def train(self, render_every: int = None):
-        for i in range(300):
+        for i in count(start=self.start_episode):
             if render_every is None:
                 self.train_episode(i, False)
             elif i % render_every == 0:
@@ -213,14 +225,6 @@ class DQNTrainer(object):
         # Initialize X Position Tracking
         last_x = 0
         x_pos_timeout = 0
-
-        # #Fill Buffer
-        # for _ in range(self.FRAME_BUFFER-1):
-        #     self.frame_buffer.append(torch.zeros((1,self.STATE_SIZE, self.STATE_SIZE), device=self.device))
-        # self.frame_buffer.append(last_frame)
-
-        # #Convert Buffer to State
-        # state = self.buffer_to_state()
 
         it_start = time.time()
         for t in range(self.MAX_STEPS):
@@ -246,11 +250,9 @@ class DQNTrainer(object):
             # Total the Rewards for the episode
             episode_rewards += reward
 
-            # Observe new state if not done
+            # break if the game is done
             if done:
                 break
-            # else:
-            #     next_state = self.buffer_to_state()
 
             # Store the transition in memory if next_state is not none
             self.memory.push(state, action, next_state, reward)
@@ -281,15 +283,16 @@ class DQNTrainer(object):
             # Print status of learning every 60 frames
             if t % 60 == 0:
                 str_dict = {
-                    "episode_str": f"Episode {nEpisode:03.0f}/300",
+                    "episode_str": f"Episode {nEpisode:03.0f}",
                     "step_str": f"Step {t:04.0f}/{self.MAX_STEPS}",
                     "reward_str": f"Rewards: {episode_rewards.item():05.0f}",
+                    "best_reward_str": f"Best Reward: {self.best_reward.item():05.0f}",
                     "score_str": f"Score: {info['score']:05.0f}",
                     "xpos_str": f"X Pos: {info['x_pos']:04.0f}",
                     "time_str": f"Timeout: {x_pos_timeout:03.0f}",
                     "prob_str": f"Rand Prob: {round(self.calc_rand_prob(), 3):05.3f}",
                     "ittime_str": f"It Time: {self.avg_splits(self.it_times):06.4f}",
-                    "mem_str": f"Mem: {sys.getsizeof(self.memory.memory)/10**6:06.3} MB",
+                    "mem_str": f"Mem: {sys.getsizeof(self.memory.memory)/10**6:06.3f} MB",
                     "padding": "{:15}".format(" ")
                 }
                 print(", ".join(str_dict.values()), end="\r")
@@ -299,6 +302,9 @@ class DQNTrainer(object):
                 self.env.render(mode='human')
 
             last_x = info['x_pos']
+        if episode_rewards.item() > self.best_reward.item():
+            torch.save((nEpisode, episode_rewards, self.policy_dqn.state_dict()), self.model_out)
+            self.best_reward = episode_rewards
 
         print()
 

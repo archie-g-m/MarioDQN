@@ -1,0 +1,24 @@
+models\mario_E796_R2512.pt
+    Trained for 796 Episodes, Reached a Best Reward of 2512
+    Config:
+    [Environment Hyperparameters]
+    SKIP_FRAMES = 4
+    GRAYSCALE = True
+    ENV_SIZE = 64
+    FRAME_STACK = 4
+
+    [Training Hyperparameters]
+    #Neural Net Parameters
+    BATCH_SIZE = 64
+    GAMMA = 0.999
+    EPS_START = 0.9
+    EPS_END = 0.05
+    EPS_DECAY = 20000
+    TARGET_UPDATE = 10
+
+    #Gameplay Parameters
+    MAX_STEPS = 3000
+    X_TIMEOUT = 1000
+    X_TIMEOUT_THRESH = 1
+    STATE_SIZE = 64
+    FRAME_BUFFER = 1
