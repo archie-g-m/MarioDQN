@@ -49,8 +49,6 @@ class DQNTrainer(object):
             'Training Hyperparameters', 'X_TIMEOUT'))
         self.X_THRESH = int(config.get(
             'Training Hyperparameters', 'X_TIMEOUT_THRESH'))
-        self.STATE_SIZE = int(config.get(
-            'Training Hyperparameters', 'STATE_SIZE'))
         self.FRAME_BUFFER = int(config.get(
             'Environment Hyperparameters', 'FRAME_STACK'))
 
@@ -80,7 +78,7 @@ class DQNTrainer(object):
             print("Best Reward " + str(self.best_reward))
         else: # Otherwise initialize the tracking metrics to 0
             self.start_episode = 0
-            self.best_reward = 0
+            self.best_reward = torch.tensor(0)
 
         # Sync both networks to start
         self.target_dqn.load_state_dict(self.policy_dqn.state_dict())

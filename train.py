@@ -45,7 +45,7 @@ if __name__ == "__main__":
         train_env = GrayScaleObservation(train_env)
     train_env = ResizeObservation(train_env, shape=resize)
     # [["right"], ["right", "A"]])
-    train_env = FrameStack(train_env, num_stack=4)
+    train_env = FrameStack(train_env, num_stack=frame_stack)
     train_env = JoypadSpace(train_env, SIMPLE_MOVEMENT)
     train_env.seed(1)
 
